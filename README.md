@@ -196,8 +196,9 @@ stored in your global git config under `[dev]`. `DEV_REPO`, `DEV_ROOT`, and
 
 ## Development
 
-See [AGENTS.md](AGENTS.md). Every push to `main` that passes CI publishes a
-release, versioned from its commit types as AGENTS.md describes.
+See [AGENTS.md](AGENTS.md). Every push to `main` that passes CI and changes the
+program publishes a release, versioned from its commit types as AGENTS.md
+describes.
 
 ```bash
 make test     # go test -race ./...

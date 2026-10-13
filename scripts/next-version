@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Prints the version the commits since the last tag release as, from their
-# Conventional Commit types, or nothing when there is nothing to release.
+# Conventional Commit types, or nothing when none of them changes what ships.
+# Docs, tests, and CI wait for the next release that does.
 set -euo pipefail
 
 last=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo v0.0.0)
 range=HEAD
 [ "$last" != v0.0.0 ] && range="$last..HEAD"
-[ -z "$(git rev-list "$range")" ] && exit 0
+shipped=('*.go' ':!*_test.go' ':!internal/testrepo' go.mod go.sum 'keymap/*.conf' .goreleaser.yaml)
+[ -z "$(git rev-list "$range" -- "${shipped[@]}")" ] && exit 0
 
 log=$(git log --format=%B "$range")
 if grep -qE '^[a-z]+(\([^)]*\))?!:|^BREAKING[ -]CHANGE:' <<<"$log"; then

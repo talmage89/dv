@@ -45,7 +45,8 @@ jobs:
         with:
           version: latest
 
-  # Every push to main that passes CI is released, versioned by its commits.
+  # A push to main that passes CI and changes what ships is released,
+  # versioned by its commits; scripts/next-version decides both.
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [test, lint]

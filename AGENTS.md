@@ -20,7 +20,9 @@ output, no uncommitted changes, `git status` empty.
 
 ## Versions
 
-Every push to `main` that passes CI is released. The version comes from the
+Every push to `main` that passes CI and changes what ships (non-test Go code,
+`go.mod`, `go.sum`, `keymap/*.conf`, `.goreleaser.yaml`) is released. Docs,
+tests, and CI changes wait for the next such push. The version comes from the
 commit types since the last tag (`scripts/next-version` previews it), so the
 commit type is the version decision. Never tag by hand.
 
