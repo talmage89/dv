@@ -26,18 +26,36 @@ a long-running session stays in its directory.
             clean · 1 Claude session · pushed · 8 ahead, 0 behind main · active 10:29
 
   10 checked out · 9 free · 1 parked
-  enter open   N new   W fresh   Z park   P prune   O sweep   R run   S scale   M main   C config   ? help
+  enter open   N new   W fresh   Z park   P prune   S sweep   R run   O scale   M main   C config   ? help
 ```
 
 ## Install
 
-Requires git 2.41+ and Go 1.25+ to build.
+Requires git 2.41+. Releases include binaries for macOS and Linux on amd64
+and arm64. This installs the latest one to `~/.local/bin` (which must be on
+your `PATH`); run it again to upgrade:
+
+```bash
+os=$(uname -s | tr A-Z a-z); arch=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+mkdir -p ~/.local/bin
+curl -fsSL "https://github.com/talmage89/dv/releases/latest/download/dv_${os}_${arch}.tar.gz" \
+  | tar -xz -C ~/.local/bin dv
+dv install --write    # adds eval "$(command dv shell-init)" to your shell rc
+```
+
+A binary downloaded through a browser on macOS is quarantined; clear it with
+`xattr -d com.apple.quarantine dv`. The
+[releases page](https://github.com/talmage89/dv/releases) lists every version
+with checksums.
+
+To build from source instead (Go 1.25+), which is also how custom
+[key bindings](#key-bindings) are compiled in:
 
 ```bash
 git clone https://github.com/talmage89/dv.git
 cd dv
 make install          # builds ~/.local/bin/dv (PREFIX=… to change)
-dv install --write    # adds eval "$(command dv shell-init)" to your shell rc
+dv install --write
 ```
 
 The shell integration is what lets dv change your shell's directory. A
@@ -51,7 +69,7 @@ Your clone can live anywhere; pooled worktrees go in a directory beside it:
 ```
 my-project/              your clone (the main worktree)
 my-project-worktrees/    the pool (the root setting)
-  dev-1/                 created with S in the interface, or dv scale
+  dev-1/                 created with O in the interface, or dv scale
   dev-2/
 ```
 
@@ -75,9 +93,9 @@ a name that does not exist locally is offered as a fetch from origin.
 | D | detach: free the worktree without parking |
 | X | delete the branch |
 | P | prune branches whose upstream was deleted on origin |
-| O | sweep: free worktrees holding branches with no commit of yours |
+| S | sweep: free worktrees holding branches with no commit of yours |
 | R | run a command in every worktree, with per-worktree output |
-| S | scale the number of pooled worktrees |
+| O | scale the number of pooled worktrees |
 | M | go to the main worktree |
 | C | config |
 | L | log and sync issues |

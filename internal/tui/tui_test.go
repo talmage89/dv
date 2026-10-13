@@ -153,7 +153,7 @@ func TestEveryScreenFits(t *testing.T) {
 	a := newTestApp(t)
 	for _, size := range [][2]int{{100, 30}, {60, 16}, {200, 50}} {
 		a.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-		for _, key := range []string{"N", "S", "R", "C", "L", "?"} {
+		for _, key := range []string{"N", "S", "O", "R", "C", "L", "?"} {
 			press(a, key)
 			assertFrame(t, a)
 			press(a, "esc")
