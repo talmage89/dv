@@ -214,10 +214,8 @@ func (a *App) logf(lvl level, format string, args ...any) {
 
 var (
 	_ statusProvider = (*homeScreen)(nil)
-	_ statusProvider = (*pruneScreen)(nil)
 	_ statusProvider = (*sweepScreen)(nil)
 	_ statusProvider = (*runScreen)(nil)
-	_ initializer    = (*pruneScreen)(nil)
 	_ initializer    = (*sweepScreen)(nil)
 	_ initializer    = (*scaleScreen)(nil)
 	_ interrupter    = (*runScreen)(nil)

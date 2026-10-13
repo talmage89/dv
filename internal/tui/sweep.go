@@ -14,7 +14,8 @@ import (
 type sweepState int
 
 const (
-	sweepListing sweepState = iota
+	sweepFetching sweepState = iota
+	sweepListing
 	sweepReady
 	sweepRunning
 	sweepDone
@@ -23,11 +24,12 @@ const (
 type sweepItem struct {
 	c        pool.SweepCandidate
 	selected bool
-	result   string // "" until freed; "ok" or an error message
+	result   string // "" until swept; "ok" or an error message
 }
 
-// sweepScreen frees worktrees holding branches that are not the user's,
-// keeping the branches.
+// sweepScreen clears away branches that no longer need a place: it deletes
+// branches whose upstream was deleted on origin, and frees worktrees holding
+// branches that are not the user's, keeping those branches.
 type sweepScreen struct {
 	state  sweepState
 	items  []sweepItem
@@ -38,6 +40,8 @@ type sweepScreen struct {
 func newSweep() *sweepScreen { return &sweepScreen{} }
 
 func (s *sweepScreen) animating() bool { return s.state != sweepReady && s.state != sweepDone }
+
+type sweepFetchMsg struct{ err error }
 
 type sweepListMsg struct {
 	cands []pool.SweepCandidate
@@ -50,6 +54,15 @@ type sweptMsg struct {
 }
 
 func (s *sweepScreen) init(a *App) tea.Cmd {
+	if a.fetching {
+		return nil // the background fetch's result is forwarded here
+	}
+	repo, ctx := a.repo, a.ctx
+	return func() tea.Msg { return sweepFetchMsg{err: repo.Fetch(ctx)} }
+}
+
+func (s *sweepScreen) list(a *App) tea.Cmd {
+	s.state = sweepListing
 	repo, ctx := a.repo, a.ctx
 	return func() tea.Msg {
 		c, err := repo.SweepCandidates(ctx)
@@ -59,6 +72,16 @@ func (s *sweepScreen) init(a *App) tea.Cmd {
 
 func (s *sweepScreen) update(a *App, msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
+	case fetchDoneMsg:
+		if s.state == sweepFetching {
+			return s.update(a, sweepFetchMsg(msg))
+		}
+	case sweepFetchMsg:
+		if msg.err != nil {
+			// Sweep from the last successful fetch rather than not at all.
+			s.err = msg.err.Error() + " — showing results from the last fetch"
+		}
+		return tea.Batch(s.list(a), a.reloadSnapshot())
 	case sweepListMsg:
 		if msg.err != nil {
 			s.err = msg.err.Error()
@@ -127,46 +150,73 @@ func (s *sweepScreen) key(a *App, msg tea.KeyPressMsg) tea.Cmd {
 }
 
 func (s *sweepScreen) start(a *App) tea.Cmd {
-	n := 0
+	n, dirty := 0, 0
 	for _, it := range s.items {
 		if it.selected {
 			n++
+			if it.c.Status.Dirty {
+				dirty++
+			}
 		}
 	}
 	if n == 0 {
 		a.notify(levelWarn, "Nothing selected")
 		return nil
 	}
-	s.state = sweepRunning
-	a.busy = "sweeping"
-	return s.next(a, 0)
+	run := func() tea.Cmd {
+		s.state = sweepRunning
+		a.busy = "sweeping"
+		return s.next(a, 0)
+	}
+	if dirty > 0 {
+		a.confirm("discard changes", []string{
+			fmt.Sprintf("%s selected for deletion %s uncommitted changes. They will be discarded (reset --hard and clean -fd).",
+				plural(dirty, "worktree", "worktrees"), map[bool]string{true: "has", false: "have"}[dirty == 1]),
+		}, true, "discard and sweep", run)
+		return nil
+	}
+	return run()
 }
 
-// next frees the next selected worktree at or after i, one at a time.
+// next sweeps the next selected item at or after i, one at a time.
 func (s *sweepScreen) next(a *App, i int) tea.Cmd {
 	for ; i < len(s.items); i++ {
 		if s.items[i].selected && s.items[i].result == "" {
-			branch, repo, ctx, idx := s.items[i].c.Branch, a.repo, a.ctx, i
+			it, repo, ctx, idx := s.items[i], a.repo, a.ctx, i
 			return func() tea.Msg {
-				return sweptMsg{i: idx, err: repo.Release(ctx, branch)}
+				return sweptMsg{i: idx, err: repo.Sweep(ctx, it.c, it.c.Status.Dirty)}
 			}
 		}
 	}
 	s.state = sweepDone
 	a.busy = ""
-	ok, failed := 0, 0
+	deleted, freed, failed := 0, 0, 0
 	for _, it := range s.items {
 		switch {
+		case it.result == "ok" && it.c.Gone:
+			deleted++
 		case it.result == "ok":
-			ok++
+			freed++
 		case it.result != "":
 			failed++
 		}
 	}
+	var parts []string
+	if deleted > 0 {
+		parts = append(parts, "deleted "+plural(deleted, "branch", "branches"))
+	}
+	if freed > 0 {
+		parts = append(parts, "freed "+plural(freed, "worktree", "worktrees"))
+	}
 	if failed > 0 {
-		a.notify(levelError, fmt.Sprintf("Freed %d, %d failed", ok, failed))
+		parts = append(parts, fmt.Sprintf("%d failed", failed))
+	}
+	text := strings.Join(parts, ", ")
+	text = strings.ToUpper(text[:1]) + text[1:]
+	if failed > 0 {
+		a.notify(levelError, text)
 	} else {
-		a.notify(levelInfo, "Freed "+plural(ok, "worktree", "worktrees"))
+		a.notify(levelInfo, text)
 	}
 	return tea.Batch(a.reloadSnapshot(), a.loadLive())
 }
@@ -179,25 +229,43 @@ func (s *sweepScreen) view(a *App, w, h int) string {
 		body = append(body, "")
 	}
 	switch {
-	case s.state == sweepListing:
-		body = append(body, a.spinner.View()+" "+stMuted.Render("Checking whose branches are checked out…"))
+	case s.state == sweepFetching:
+		body = append(body, a.spinner.View()+" "+stMuted.Render("Fetching origin to see which branches were deleted…"))
 		return panel("", body, w, h, true)
-	case s.err != "":
+	case s.state == sweepListing:
+		body = append(body, a.spinner.View()+" "+stMuted.Render("Checking branches…"))
+		return panel("", body, w, h, true)
+	case len(s.items) == 0 && s.state == sweepDone:
 		return panel("", body, w, h, true)
 	case len(s.items) == 0:
 		body = append(body, "Nothing to sweep.",
-			stMuted.Render("Every checked-out branch has a commit by "+strings.Join(a.repo.Emails, " or ")+"."))
+			stMuted.Render("No local branch was deleted on origin, and every checked-out branch has a commit by "+strings.Join(a.repo.Emails, " or ")+"."))
 		return panel("", body, w, h, true)
 	}
-	body = append(body, stMuted.Render("Worktrees holding branches with no commit of yours. Freeing one keeps the branch."), "")
+	var lines []string
+	cursorLine := 0
+	for i, it := range s.items {
+		if i == 0 || it.c.Gone != s.items[i-1].c.Gone {
+			if i > 0 {
+				lines = append(lines, "")
+			}
+			if it.c.Gone {
+				lines = append(lines, stMuted.Render("Deleted on origin, usually after a merge. Sweeping deletes the local branch."))
+			} else {
+				lines = append(lines, stMuted.Render("Branches with no commit of yours. Sweeping frees the worktree and keeps the branch."))
+			}
+		}
+		if i == s.cursor {
+			cursorLine = len(lines)
+		}
+		lines = append(lines, s.renderItem(a, it, i == s.cursor && s.state == sweepReady, inner))
+	}
 	listH := h - 2 - len(body)
 	start := 0
-	if s.cursor >= listH {
-		start = s.cursor - listH + 1
+	if cursorLine >= listH {
+		start = cursorLine - listH + 1
 	}
-	for i := start; i < len(s.items) && i-start < listH; i++ {
-		body = append(body, s.renderItem(a, s.items[i], i == s.cursor && s.state == sweepReady, inner))
-	}
+	body = append(body, lines[start:min(len(lines), start+listH)]...)
 	return panel("", body, w, h, true)
 }
 
@@ -216,22 +284,38 @@ func (s *sweepScreen) renderItem(a *App, it sweepItem, selected bool, w int) str
 		box = a.spinner.View()
 	case !it.c.Selectable():
 		box = stMuted.Render("–")
+	case it.selected && it.c.Status.Dirty:
+		box = stErr.Render("●")
 	case it.selected:
 		box = "●"
 	default:
 		box = stMuted.Render("○")
 	}
-	notes := []string{stMuted.Render(filepath.Base(it.c.Worktree))}
+	var notes []string
 	switch {
 	case it.result != "" && it.result != "ok":
 		notes = append(notes, stErr.Render(it.result))
+	case it.c.InMain:
+		notes = append(notes, stMuted.Render("checked out in the main worktree; switch it there first"))
+	case it.c.Worktree == "":
+		notes = append(notes, stMuted.Render("not checked out"))
 	case it.c.Status.Err != "":
-		notes = append(notes, stWarn.Render("status failed: "+firstLine(it.c.Status.Err)))
-	case it.c.Status.Dirty:
-		notes = append(notes, stErr.Render(plural(it.c.Status.Files, "uncommitted change", "uncommitted changes")))
+		notes = append(notes, stMuted.Render(filepath.Base(it.c.Worktree)), stWarn.Render("status failed: "+firstLine(it.c.Status.Err)))
+	default:
+		notes = append(notes, stMuted.Render(filepath.Base(it.c.Worktree)))
+		if it.c.Status.Dirty && it.result == "" {
+			t := plural(it.c.Status.Files, "uncommitted change", "uncommitted changes")
+			if it.selected {
+				t += " will be discarded"
+			}
+			notes = append(notes, stErr.Render(t))
+		}
 	}
-	if it.c.Live > 0 {
+	if it.c.Live > 0 && it.result == "" {
 		notes = append(notes, stWarn.Render("Claude running"))
+	}
+	if it.c.Parked {
+		notes = append(notes, stMuted.Render("parked"))
 	}
 	nameW := min(max(w/2, 20), w-10)
 	label := pad(it.c.Branch, nameW)
@@ -260,7 +344,7 @@ func (s *sweepScreen) hints(a *App) []hint {
 		if len(s.items) == 0 {
 			return []hint{{keys.Key(keymap.ListBack), "back"}}
 		}
-		return []hint{{keys.Key(keymap.ListToggle), "toggle"}, {keys.Key(keymap.ListToggleAll), "all"}, {keys.Key(keymap.ListConfirm), "free selected"}, {keys.Key(keymap.ListBack), "back"}}
+		return []hint{{keys.Key(keymap.ListToggle), "toggle"}, {keys.Key(keymap.ListToggleAll), "all"}, {keys.Key(keymap.ListConfirm), "sweep selected"}, {keys.Key(keymap.ListBack), "back"}}
 	case sweepDone:
 		return []hint{{keys.Key(keymap.ListConfirm) + "/" + keys.Key(keymap.ListBack), "back"}}
 	}
@@ -269,14 +353,14 @@ func (s *sweepScreen) hints(a *App) []hint {
 
 func (s *sweepScreen) help() []helpSection {
 	return []helpSection{{"Sweep", []hint{
-		{keys.Keys(keymap.ListToggle), "select or deselect a worktree"},
+		{keys.Keys(keymap.ListToggle), "select or deselect a branch"},
 		{keys.Keys(keymap.ListToggleAll), "select or deselect all"},
-		{keys.Keys(keymap.ListConfirm), "free the selection, keeping the branches"},
+		{keys.Keys(keymap.ListConfirm), "sweep the selection: delete branches deleted on origin, free worktrees holding others' branches"},
 		{keys.Keys(keymap.ListBack), "back"},
 	}}, {"Defaults", []hint{
-		{"selected", "clean worktrees with no Claude session"},
-		{"not selected", "worktrees with a Claude session running"},
-		{"unavailable", "worktrees with uncommitted changes"},
+		{"selected", "anything clean, not parked, and with no Claude session running"},
+		{"not selected", "Claude sessions, parked branches, and gone branches with uncommitted changes (selecting discards them)"},
+		{"unavailable", "others' branches with uncommitted changes, and anything in the main worktree"},
 	}}}
 }
 

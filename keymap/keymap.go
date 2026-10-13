@@ -32,7 +32,6 @@ const (
 	HomeDetach   Action = "home.detach"
 	HomeDelete   Action = "home.delete"
 	HomeCopy     Action = "home.copy"
-	HomePrune    Action = "home.prune"
 	HomeSweep    Action = "home.sweep"
 	HomeRun      Action = "home.run"
 	HomeScale    Action = "home.scale"
@@ -91,7 +90,7 @@ const (
 // actions lists every Action; defaults.conf must bind each one.
 var actions = []Action{
 	HomeOpen, HomeEscape, HomeUp, HomeDown, HomePageUp, HomePageDown, HomeHelp,
-	HomeNew, HomeFresh, HomePark, HomeDetach, HomeDelete, HomeCopy, HomePrune,
+	HomeNew, HomeFresh, HomePark, HomeDetach, HomeDelete, HomeCopy,
 	HomeSweep, HomeRun, HomeScale, HomeMain, HomeConfig, HomeLog, HomeFetch,
 	ListUp, ListDown, ListPageUp, ListPageDown, ListToggle, ListToggleAll,
 	ListConfirm, ListBack, ListHelp,

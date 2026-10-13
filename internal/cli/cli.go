@@ -39,6 +39,7 @@ var removed = map[string]string{
 	"branches": "run `dv` for the interface, or `dv ls` for a plain list",
 	"migrate":  "the old alias setup is long gone",
 	"tutorial": "run `dv` and press ? for keys",
+	"prune":    "use `dv sweep`, which now deletes branches deleted on origin too",
 }
 
 // session carries per-invocation state.
@@ -97,8 +98,6 @@ func (s *session) dispatch(args []string) int {
 		return s.withRepo(func(r *pool.Repo) int { return s.sync(r, rest) })
 	case "unsync":
 		return s.withRepo(func(r *pool.Repo) int { return s.unsync(r, rest) })
-	case "prune":
-		return s.withRepo(func(r *pool.Repo) int { return s.prune(r, rest) })
 	case "sweep":
 		return s.withRepo(func(r *pool.Repo) int { return s.sweep(r, rest) })
 	case "park", "unpark":
@@ -126,8 +125,8 @@ const usage = `dv — a pool of git worktrees
 
   dv ls                  list checked-out and parked branches, most recent first
   dv park <branch>       free <branch>'s worktree but keep it listed; dv unpark undoes
-  dv prune [--force]     delete branches whose upstream was deleted, freeing worktrees
-  dv sweep               free worktrees holding branches with no commit of yours
+  dv sweep [--force]     delete branches deleted on origin; free worktrees holding
+                         branches with no commit of yours
   dv scale [<n>]         show or change the number of pooled worktrees
   dv run [-x <dir>]... <command>
                          run a command in every worktree, one after another
@@ -259,7 +258,7 @@ func isSubcommand(name string) bool {
 	}
 	switch name {
 	case "-h", "--help", "help", "-v", "--version", "version", "shell-init", "install", "config",
-		"ls", "run", "sync", "unsync", "prune", "sweep", "park", "unpark", "scale":
+		"ls", "run", "sync", "unsync", "sweep", "park", "unpark", "scale":
 		return true
 	}
 	return strings.HasPrefix(name, "-")
@@ -470,7 +469,7 @@ func (s *session) unsync(r *pool.Repo, args []string) int {
 	return 0
 }
 
-func (s *session) prune(r *pool.Repo, args []string) int {
+func (s *session) sweep(r *pool.Repo, args []string) int {
 	force, fetch := false, true
 	for _, a := range args {
 		switch a {
@@ -479,7 +478,7 @@ func (s *session) prune(r *pool.Repo, args []string) int {
 		case "--no-fetch":
 			fetch = false
 		default:
-			fmt.Fprintln(os.Stderr, "usage: dv prune [--force] [--no-fetch]")
+			fmt.Fprintln(os.Stderr, "usage: dv sweep [--force] [--no-fetch]")
 			return 2
 		}
 	}
@@ -488,42 +487,6 @@ func (s *session) prune(r *pool.Repo, args []string) int {
 		if err := r.Fetch(s.ctx); err != nil {
 			fmt.Fprintln(os.Stderr, "dv:", err, "(using the last fetch)")
 		}
-	}
-	cands, err := r.PruneCandidates(s.ctx)
-	if err != nil {
-		return fail(err)
-	}
-	if len(cands) == 0 {
-		fmt.Println("Nothing to prune.")
-		return 0
-	}
-	code := 0
-	for _, c := range cands {
-		switch {
-		case c.InMain:
-			fmt.Printf("skip    %s (checked out in the main worktree)\n", c.Branch)
-			continue
-		case c.Parked:
-			fmt.Printf("skip    %s (parked; unpark it or prune from the interface)\n", c.Branch)
-			continue
-		case c.Status.Dirty && !force:
-			fmt.Printf("skip    %s (uncommitted changes; --force discards them)\n", c.Branch)
-			continue
-		}
-		if err := r.Prune(s.ctx, c, force && c.Status.Dirty); err != nil {
-			fmt.Fprintf(os.Stderr, "failed  %s: %v\n", c.Branch, err)
-			code = 1
-			continue
-		}
-		fmt.Printf("pruned  %s\n", c.Branch)
-	}
-	return code
-}
-
-func (s *session) sweep(r *pool.Repo, args []string) int {
-	if len(args) > 0 {
-		fmt.Fprintln(os.Stderr, "usage: dv sweep")
-		return 2
 	}
 	cands, err := r.SweepCandidates(s.ctx)
 	if err != nil {
@@ -536,22 +499,35 @@ func (s *session) sweep(r *pool.Repo, args []string) int {
 	code := 0
 	for _, c := range cands {
 		switch {
-		case c.Status.Err != "":
-			fmt.Printf("skip    %s (status unreadable: %s)\n", c.Branch, c.Status.Err)
+		case c.InMain:
+			fmt.Printf("skip     %s (checked out in the main worktree)\n", c.Branch)
 			continue
-		case c.Status.Dirty:
-			fmt.Printf("skip    %s (uncommitted changes)\n", c.Branch)
+		case c.Status.Err != "":
+			fmt.Printf("skip     %s (status unreadable: %s)\n", c.Branch, c.Status.Err)
+			continue
+		case c.Parked:
+			fmt.Printf("skip     %s (parked; unpark it or sweep from the interface)\n", c.Branch)
 			continue
 		case c.Live > 0:
-			fmt.Printf("skip    %s (Claude is running there; sweep it from the interface)\n", c.Branch)
+			fmt.Printf("skip     %s (Claude is running there; sweep it from the interface)\n", c.Branch)
+			continue
+		case c.Status.Dirty && !c.Gone:
+			fmt.Printf("skip     %s (uncommitted changes)\n", c.Branch)
+			continue
+		case c.Status.Dirty && !force:
+			fmt.Printf("skip     %s (uncommitted changes; --force discards them)\n", c.Branch)
 			continue
 		}
-		if err := r.Release(s.ctx, c.Branch); err != nil {
-			fmt.Fprintf(os.Stderr, "failed  %s: %v\n", c.Branch, err)
+		if err := r.Sweep(s.ctx, c, force && c.Status.Dirty); err != nil {
+			fmt.Fprintf(os.Stderr, "failed   %s: %v\n", c.Branch, err)
 			code = 1
 			continue
 		}
-		fmt.Printf("freed   %s (%s)\n", c.Branch, filepath.Base(c.Worktree))
+		if c.Gone {
+			fmt.Printf("deleted  %s\n", c.Branch)
+		} else {
+			fmt.Printf("freed    %s (%s)\n", c.Branch, filepath.Base(c.Worktree))
+		}
 	}
 	return code
 }

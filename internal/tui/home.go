@@ -219,8 +219,6 @@ func (h *homeScreen) key(a *App, msg tea.KeyPressMsg) tea.Cmd {
 		return a.push(newNewBranch(a, h.newBranchSeed(a)))
 	case keys.Is(k, keymap.HomeFresh):
 		return h.fresh(a)
-	case keys.Is(k, keymap.HomePrune):
-		return a.push(newPrune())
 	case keys.Is(k, keymap.HomeSweep):
 		return a.push(newSweep())
 	case keys.Is(k, keymap.HomeScale):
@@ -638,7 +636,7 @@ func (h *homeScreen) status(a *App) string {
 		parts = append(parts, fmt.Sprintf("%d parked", n))
 	}
 	if total, _ := a.goneCounts(); total > 0 {
-		parts = append(parts, stWarn.Render(plural(total, "branch", "branches")+" deleted on origin")+stMuted.Render(", "+keys.Key(keymap.HomePrune)+" prunes"))
+		parts = append(parts, stWarn.Render(plural(total, "branch", "branches")+" deleted on origin")+stMuted.Render(", "+keys.Key(keymap.HomeSweep)+" sweeps"))
 	}
 	return stMuted.Render(strings.Join(parts, stMuted.Render(" · ")))
 }
@@ -649,7 +647,6 @@ func (h *homeScreen) hints(a *App) []hint {
 		{keys.Key(keymap.HomeNew), "new"},
 		{keys.Key(keymap.HomeFresh), "fresh"},
 		{keys.Key(keymap.HomePark), "park"},
-		{keys.Key(keymap.HomePrune), "prune"},
 		{keys.Key(keymap.HomeSweep), "sweep"},
 		{keys.Key(keymap.HomeRun), "run"},
 		{keys.Key(keymap.HomeScale), "scale"},
@@ -679,8 +676,7 @@ func (h *homeScreen) help() []helpSection {
 			{keys.Keys(keymap.HomeNew), "new branch"},
 			{keys.Keys(keymap.HomeFresh), "fresh worktree: a free one, detached at the base ref"},
 			{keys.Keys(keymap.HomeMain), "main worktree"},
-			{keys.Keys(keymap.HomePrune), "prune branches deleted on origin"},
-			{keys.Keys(keymap.HomeSweep), "sweep: free worktrees holding branches with no commit of yours"},
+			{keys.Keys(keymap.HomeSweep), "sweep: delete branches deleted on origin, free worktrees holding others' branches"},
 			{keys.Keys(keymap.HomeRun), "run a command in every worktree"},
 			{keys.Keys(keymap.HomeScale), "scale the number of worktrees"},
 			{keys.Keys(keymap.HomeConfig), "config"},
@@ -694,7 +690,7 @@ func (h *homeScreen) help() []helpSection {
 func friendly(err error) error {
 	switch {
 	case errors.Is(err, pool.ErrNoFreeSlot):
-		return fmt.Errorf("no free worktree — press %s to add more, %s to prune merged branches, or %s to sweep others' branches", keys.Key(keymap.HomeScale), keys.Key(keymap.HomePrune), keys.Key(keymap.HomeSweep))
+		return fmt.Errorf("no free worktree — press %s to add more, or %s to sweep merged and others' branches", keys.Key(keymap.HomeScale), keys.Key(keymap.HomeSweep))
 	case errors.Is(err, pool.ErrDirty):
 		return fmt.Errorf("%w — commit, stash, or discard first", err)
 	}

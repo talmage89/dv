@@ -9,25 +9,45 @@ import (
 	"github.com/talmage89/dv/internal/gitx"
 )
 
-// SweepCandidate is a worktree holding a branch that is not the user's.
+// SweepCandidate is a branch that sweep clears away. A branch whose upstream
+// was deleted on origin is deleted outright; a worktree holding a branch that
+// is not the user's is freed, keeping the branch.
 type SweepCandidate struct {
 	Branch   string
-	Worktree string
-	Status   Status
-	Live     int // Claude sessions running in the worktree
+	Worktree string // holding worktree, if checked out
+	Status   Status // of the holding worktree
+	Live     int    // Claude sessions running in the holding worktree
+	Gone     bool   // upstream deleted on origin; sweeping deletes the branch
+	Parked   bool
+	InMain   bool // checked out in the main worktree; never swept
 }
 
-// Selectable reports whether the worktree can be freed without losing work.
-func (c SweepCandidate) Selectable() bool { return c.Status.Err == "" && !c.Status.Dirty }
+// Selectable reports whether the candidate may be swept at all. Deleting a
+// gone branch can discard its worktree's changes; freeing a kept branch never
+// discards anything, so a dirty worktree rules it out.
+func (c SweepCandidate) Selectable() bool {
+	return !c.InMain && c.Status.Err == "" && (c.Gone || !c.Status.Dirty)
+}
 
-// DefaultSelected is the initial selection: worktrees no Claude session is
-// using. Live ones must be opted into.
-func (c SweepCandidate) DefaultSelected() bool { return c.Selectable() && c.Live == 0 }
+// DefaultSelected is the initial selection: everything safe. Uncommitted
+// changes, parked branches, and running Claude sessions must be opted into.
+func (c SweepCandidate) DefaultSelected() bool {
+	return c.Selectable() && !c.Status.Dirty && !c.Parked && c.Live == 0
+}
 
-// SweepCandidates lists pooled and external worktrees whose branch is not the
-// user's: none of the commits it has beyond the base ref is authored by one of
-// the user's emails. A branch with no such commits (merged, or never committed
-// to) is judged by its tip's author. The branch the base ref tracks is exempt.
+// Fetch updates remote-tracking refs and drops ones deleted on the remote.
+func (r *Repo) Fetch(ctx context.Context) error {
+	if _, err := gitx.Run(ctx, r.Main, "fetch", "--prune", "--quiet", "origin"); err != nil {
+		return fmt.Errorf("fetch: %s", gitx.Message(err))
+	}
+	return nil
+}
+
+// SweepCandidates lists branches whose upstream is gone as of the last fetch,
+// then checked-out branches that are not the user's: none of the commits a
+// branch has beyond the base ref is authored by one of the user's emails. A
+// branch with no such commits (merged, or never committed to) is judged by its
+// tip's author. The branch the base ref tracks is never the user's to sweep.
 func (r *Repo) SweepCandidates(ctx context.Context) ([]SweepCandidate, error) {
 	if len(r.Emails) == 0 {
 		return nil, fmt.Errorf("no emails configured; set them with `dv config emails <a>,<b>`")
@@ -39,6 +59,42 @@ func (r *Repo) SweepCandidates(ctx context.Context) ([]SweepCandidate, error) {
 	if err != nil {
 		return nil, err
 	}
+	gone := snap.Gone()
+	others, err := r.othersBranches(ctx, snap)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, branch := range append(append([]*Branch{}, gone...), others...) {
+		if branch.Worktree != "" {
+			paths = append(paths, branch.Worktree)
+		}
+	}
+	live := LiveSessions(ctx, paths)
+	out := make([]SweepCandidate, 0, len(gone)+len(others))
+	for _, branch := range gone {
+		c := SweepCandidate{Branch: branch.Name, Worktree: branch.Worktree, Gone: true, Parked: branch.Parked}
+		if branch.Worktree != "" {
+			c.InMain = branch.Worktree == snap.Main.Path
+			c.Status = StatusOf(ctx, branch.Worktree)
+			c.Live = live[branch.Worktree]
+		}
+		out = append(out, c)
+	}
+	for _, branch := range others {
+		out = append(out, SweepCandidate{
+			Branch:   branch.Name,
+			Worktree: branch.Worktree,
+			Status:   StatusOf(ctx, branch.Worktree),
+			Live:     live[branch.Worktree],
+		})
+	}
+	return out, nil
+}
+
+// othersBranches returns the checked-out branches that are not the user's,
+// leaving out gone ones, which sweep deletes instead.
+func (r *Repo) othersBranches(ctx context.Context, snap *Snapshot) ([]*Branch, error) {
 	baseBranch := r.Base
 	if r.refExists(ctx, "refs/remotes/"+r.Base) {
 		_, baseBranch, _ = strings.Cut(r.Base, "/")
@@ -50,7 +106,7 @@ func (r *Repo) SweepCandidates(ctx context.Context) ([]SweepCandidate, error) {
 		failed error
 	)
 	for _, branch := range snap.CheckedOut() {
-		if branch.Name == baseBranch {
+		if branch.Name == baseBranch || branch.Gone {
 			continue
 		}
 		wg.Add(1)
@@ -72,21 +128,25 @@ func (r *Repo) SweepCandidates(ctx context.Context) ([]SweepCandidate, error) {
 		return nil, failed
 	}
 	sortByActivity(others)
-	var paths []string
-	for _, branch := range others {
-		paths = append(paths, branch.Worktree)
+	return others, nil
+}
+
+// Sweep deletes a gone branch, freeing its worktree first, or frees the
+// worktree of a branch that is not the user's. With discard, a gone branch's
+// uncommitted changes are thrown away; without it, they are an error.
+func (r *Repo) Sweep(ctx context.Context, c SweepCandidate, discardChanges bool) error {
+	if c.InMain {
+		return fmt.Errorf("%s: %w", c.Branch, ErrInMain)
 	}
-	live := LiveSessions(ctx, paths)
-	out := make([]SweepCandidate, 0, len(others))
-	for _, branch := range others {
-		out = append(out, SweepCandidate{
-			Branch:   branch.Name,
-			Worktree: branch.Worktree,
-			Status:   StatusOf(ctx, branch.Worktree),
-			Live:     live[branch.Worktree],
-		})
+	if !c.Gone {
+		return r.Release(ctx, c.Branch)
 	}
-	return out, nil
+	if c.Worktree != "" && discardChanges {
+		if err := discard(ctx, c.Worktree); err != nil {
+			return fmt.Errorf("discard changes: %s", gitx.Message(err))
+		}
+	}
+	return r.Delete(ctx, c.Branch)
 }
 
 // branchAuthors returns the author emails of a branch's commits beyond the

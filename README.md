@@ -26,7 +26,7 @@ a long-running session stays in its directory.
             clean · 1 Claude session · pushed · 8 ahead, 0 behind main · active 10:29
 
   10 checked out · 9 free · 1 parked
-  enter open   N new   W fresh   Z park   P prune   S sweep   R run   O scale   M main   C config   ? help
+  enter open   N new   W fresh   Z park   S sweep   R run   O scale   M main   C config   ? help
 ```
 
 ## Install
@@ -92,8 +92,7 @@ a name that does not exist locally is offered as a fetch from origin.
 | Z | park / unpark: free the worktree but keep the branch listed |
 | D | detach: free the worktree without parking |
 | X | delete the branch |
-| P | prune branches whose upstream was deleted on origin |
-| S | sweep: free worktrees holding branches with no commit of yours |
+| S | sweep: delete branches deleted on origin, and free worktrees holding branches with no commit of yours |
 | R | run a command in every worktree, with per-worktree output |
 | O | scale the number of pooled worktrees |
 | M | go to the main worktree |
@@ -132,10 +131,14 @@ a worktree that is not free, and scaling down only removes free worktrees.
 config section (`branch.<name>.dvparked`), so git removes it when the branch
 is deleted. Checking a parked branch out unparks it.
 
-**Sweep** frees worktrees whose branch is not yours: none of the commits it
-has beyond the base ref is authored by one of your emails (a merged branch is
-judged by its last commit). Branches are kept. Worktrees with uncommitted
-changes are never swept, and ones running a Claude session are opt-in.
+**Sweep** clears away two kinds of branch after fetching origin. A branch
+whose upstream was deleted on origin, usually after a merge, is deleted along
+with its worktree checkout. A checked-out branch that is not yours is freed
+from its worktree and kept; it is not yours when none of the commits it has
+beyond the base ref is authored by one of your emails (a merged branch is
+judged by its last commit). Uncommitted changes, parked branches, and running
+Claude sessions are opt-in, and only a deleted branch's changes can be
+discarded.
 
 **Sync** runs in the background every time the interface opens, and after
 scaling up. With `.env` sync on, it keeps each worktree's `.env` equal to a
@@ -158,8 +161,8 @@ dv new <branch>        create <branch> from the base ref and go there
 dv main                go to the main worktree
 dv ls                  checked-out and parked branches, most recent first
 dv park | unpark <branch>
-dv prune [--force]     delete branches whose upstream was deleted
-dv sweep               free worktrees holding branches with no commit of yours
+dv sweep [--force]     delete branches deleted on origin, free worktrees holding
+                       branches with no commit of yours (--force discards changes)
 dv scale [<n>]         show or change the number of pooled worktrees
 dv run [-x <dir>]... <command>
 dv sync [env|claude] [--force]

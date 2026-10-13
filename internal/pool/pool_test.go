@@ -306,7 +306,7 @@ func TestDeleteRefusesMainWorktree(t *testing.T) {
 	}
 }
 
-func TestPruneGoneBranches(t *testing.T) {
+func TestSweepGoneBranches(t *testing.T) {
 	f := newFixture(t, 2)
 	ctx := context.Background()
 	for _, b := range []string{"me/merged", "me/dirty"} {
@@ -322,11 +322,11 @@ func TestPruneGoneBranches(t *testing.T) {
 	if err := f.repo.Fetch(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cands, err := f.repo.PruneCandidates(ctx)
+	cands, err := f.repo.SweepCandidates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	byName := map[string]PruneCandidate{}
+	byName := map[string]SweepCandidate{}
 	for _, c := range cands {
 		byName[c.Branch] = c
 	}
@@ -336,13 +336,13 @@ func TestPruneGoneBranches(t *testing.T) {
 	if c := byName["me/dirty"]; c.DefaultSelected() || !c.Status.Dirty {
 		t.Fatalf("dirty gone branch should not be selected: %+v", c)
 	}
-	if err := f.repo.Prune(ctx, byName["me/merged"], false); err != nil {
+	if err := f.repo.Sweep(ctx, byName["me/merged"], false); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.repo.Prune(ctx, byName["me/dirty"], false); !errors.Is(err, ErrDirty) {
+	if err := f.repo.Sweep(ctx, byName["me/dirty"], false); !errors.Is(err, ErrDirty) {
 		t.Fatalf("err = %v, want ErrDirty", err)
 	}
-	if err := f.repo.Prune(ctx, byName["me/dirty"], true); err != nil {
+	if err := f.repo.Sweep(ctx, byName["me/dirty"], true); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(f.snap().Gone()); n != 0 {
