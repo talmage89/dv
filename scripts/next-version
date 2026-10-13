@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Prints the version the commits since the last tag release as, from their
+# Conventional Commit types, or nothing when there is nothing to release.
+set -euo pipefail
+
+last=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo v0.0.0)
+range=HEAD
+[ "$last" != v0.0.0 ] && range="$last..HEAD"
+[ -z "$(git rev-list "$range")" ] && exit 0
+
+log=$(git log --format=%B "$range")
+if grep -qE '^[a-z]+(\([^)]*\))?!:|^BREAKING[ -]CHANGE:' <<<"$log"; then
+	bump=breaking
+elif grep -qE '^feat(\([^)]*\))?:' <<<"$log"; then
+	bump=feature
+else
+	bump=fix
+fi
+
+IFS=. read -r major minor patch <<<"${last#v}"
+if [ "$major" = 0 ]; then
+	case $bump in
+	breaking) minor=$((minor + 1)) patch=0 ;;
+	*) patch=$((patch + 1)) ;;
+	esac
+else
+	case $bump in
+	breaking) major=$((major + 1)) minor=0 patch=0 ;;
+	feature) minor=$((minor + 1)) patch=0 ;;
+	fix) patch=$((patch + 1)) ;;
+	esac
+fi
+echo "v$major.$minor.$patch"

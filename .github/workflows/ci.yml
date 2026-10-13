@@ -44,3 +44,34 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         with:
           version: latest
+
+  # Every push to main that passes CI is released, versioned by its commits.
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency: release
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: version
+        id: version
+        run: echo "next=$(scripts/next-version)" >> "$GITHUB_OUTPUT"
+      - name: tag
+        if: steps.version.outputs.next != ''
+        run: |
+          git tag "${{ steps.version.outputs.next }}"
+          git push origin "${{ steps.version.outputs.next }}"
+      - uses: goreleaser/goreleaser-action@v6
+        if: steps.version.outputs.next != ''
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
