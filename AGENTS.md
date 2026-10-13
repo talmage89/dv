@@ -14,6 +14,7 @@ configurable, with defaults that suit an arbitrary repository.
 - A user-facing change updates every place it shows: the CLI usage, the home
   hints and help sheet, and the README.
 - Commits are lowercase Conventional Commits (`feat:`, `fix:`, `style:`, …).
+- Pushing a `vX.Y.Z` tag publishes a release (`.goreleaser.yaml`).
 
 Leave the repository clean and committed when you finish: no stray build
 output, no uncommitted changes, `git status` empty.
