@@ -34,9 +34,9 @@ func (r *Repo) FreeSlot(ctx context.Context, snap *Snapshot) (Slot, error) {
 			candidates = append(candidates, s.Path)
 		}
 	}
-	live := LiveSessions(ctx, candidates)
+	sessions := Sessions(ctx, candidates)
 	for _, s := range snap.Slots {
-		if !s.Detached() || s.Missing || s.Locked || live[s.Path] > 0 {
+		if !s.Detached() || s.Missing || s.Locked || len(sessions[s.Path]) > 0 {
 			continue
 		}
 		if st := StatusOf(ctx, s.Path); st.Err == "" && !st.Dirty {

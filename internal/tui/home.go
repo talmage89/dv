@@ -11,6 +11,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/talmage89/dv/internal/pool"
 	"github.com/talmage89/dv/keymap"
@@ -326,7 +327,7 @@ func (h *homeScreen) park(a *App) tea.Cmd {
 			a.notify(levelWarn, err.Error())
 			return nil
 		}
-		if n := a.live[r.b.Worktree]; n > 0 {
+		if len(a.sessions[r.b.Worktree]) > 0 {
 			a.confirm("park", []string{stBold.Render(name), "",
 				"A Claude session is running in this worktree. Parking detaches it, so the session will find itself on " + a.repo.Base + " instead of " + name + ".",
 			}, false, "park anyway", do)
@@ -354,7 +355,7 @@ func (h *homeScreen) release(a *App) tea.Cmd {
 			return opResult{toast: "Freed the worktree holding " + name + "; the branch is kept", touched: []string{wt}}
 		})
 	}
-	if a.live[wt] > 0 {
+	if len(a.sessions[wt]) > 0 {
 		a.confirm("detach", []string{stBold.Render(name), "",
 			"A Claude session is running in this worktree. Detaching moves it off " + name + ".",
 		}, false, "detach anyway", do)
@@ -401,7 +402,7 @@ func (h *homeScreen) remove(a *App) tea.Cmd {
 	}
 	if r.b.Worktree != "" {
 		lines = append(lines, "Its worktree is freed.")
-		if a.live[r.b.Worktree] > 0 {
+		if len(a.sessions[r.b.Worktree]) > 0 {
 			lines = append(lines, stWarn.Render("A Claude session is running in that worktree."))
 		}
 	}
@@ -437,16 +438,89 @@ func (h *homeScreen) copy(a *App) tea.Cmd {
 
 // --- view ----------------------------------------------------------------------
 
-// Every row shares one grid: selection marker, age, two status cells
-// (uncommitted changes, running Claude session), then the name. Section
-// headings, the detail lines, and empty states start at the name column, so
-// the screen reads as one aligned column of text.
-const (
-	ageW    = 4
-	nameCol = 2 + ageW + 1 + 2 + 1
-)
+// Every row shares one grid: selection marker, age, the uncommitted-changes
+// marker, the Claude column when Claude Code is in use, then the name.
+// Section headings, the detail lines, and empty states start at the name
+// column, so the screen reads as one aligned column of text.
+const ageW = 4
 
-var nameIndent = strings.Repeat(" ", nameCol)
+func nameCol(a *App) int {
+	col := 2 + ageW + 1 + 1 + 1
+	if w := claudeWidth(a); w > 0 {
+		col += w + 1
+	}
+	return col
+}
+
+func nameIndent(a *App) string { return strings.Repeat(" ", nameCol(a)) }
+
+// claudeWidth is the width of the Claude column, 0 when it is hidden. It fits
+// every activity word, so only a long multi-session summary moves the names.
+func claudeWidth(a *App) int {
+	if !a.claude && len(a.sessions) == 0 {
+		return 0
+	}
+	w := len("waiting")
+	for _, sessions := range a.sessions {
+		activity, others := claudeSummary(sessions)
+		w = max(w, width(activity+others))
+	}
+	return w
+}
+
+// activityRank orders session activities by how much they want attention.
+var activityRank = map[string]int{"waiting": 0, "busy": 1, "failed": 2, "running": 3, "idle": 4, "done": 5, "stopped": 6}
+
+// claudeSummary describes a worktree's sessions in a few cells: the activity
+// of the one that most wants attention, then a count of the others.
+func claudeSummary(sessions []pool.Session) (activity, others string) {
+	if len(sessions) == 0 {
+		return "", ""
+	}
+	activity = sessions[0].Activity()
+	for _, s := range sessions[1:] {
+		if candidate := s.Activity(); activityRank[candidate] < activityRank[activity] {
+			activity = candidate
+		}
+	}
+	if len(sessions) > 1 {
+		others = fmt.Sprintf(" +%d", len(sessions)-1)
+	}
+	return activity, others
+}
+
+func activityStyle(activity string) lipgloss.Style {
+	switch activity {
+	case "waiting":
+		return stWarn
+	case "failed":
+		return stErr
+	case "busy":
+		return plain
+	}
+	return stMuted
+}
+
+// sessionsLine names each session in a worktree with what it is doing.
+func sessionsLine(sessions []pool.Session) string {
+	parts := make([]string, 0, len(sessions))
+	for _, s := range sessions {
+		var words []string
+		if s.Name != "" {
+			words = append(words, stMuted.Render(s.Name))
+		}
+		if s.Background {
+			words = append(words, stMuted.Render("(background)"))
+		}
+		activity := s.Activity()
+		text := activityStyle(activity).Render(activity)
+		if s.WaitingFor != "" && activity == "waiting" {
+			text += stMuted.Render(" (" + s.WaitingFor + ")")
+		}
+		parts = append(parts, strings.Join(append(words, text), " "))
+	}
+	return stMuted.Render("Claude: ") + strings.Join(parts, stMuted.Render(", "))
+}
 
 func (h *homeScreen) view(a *App, w, ht int) string {
 	inner := w - 4
@@ -485,9 +559,9 @@ func (h *homeScreen) view(a *App, w, ht int) string {
 func (h *homeScreen) listLines(a *App, rows []row, w int) ([]string, int) {
 	if len(rows) == 0 {
 		if h.query() == "" {
-			return []string{stMuted.Render(nameIndent + "No branches checked out. Type or paste a branch name, or press " + keys.Key(keymap.HomeNew) + ".")}, -1
+			return []string{stMuted.Render(nameIndent(a) + "No branches checked out. Type or paste a branch name, or press " + keys.Key(keymap.HomeNew) + ".")}, -1
 		}
-		return []string{stMuted.Render(nameIndent + "No matches.")}, -1
+		return []string{stMuted.Render(nameIndent(a) + "No matches.")}, -1
 	}
 	var lines []string
 	sel := -1
@@ -501,7 +575,7 @@ func (h *homeScreen) listLines(a *App, rows []row, w int) ([]string, int) {
 			if r.kind == rowIdle {
 				heading = "other branches"
 			}
-			lines = append(lines, stMuted.Render(nameIndent+heading))
+			lines = append(lines, stMuted.Render(nameIndent(a)+heading))
 		}
 		if r.kind == rowRemote && len(lines) > 0 {
 			lines = append(lines, "")
@@ -529,10 +603,11 @@ func (h *homeScreen) renderRow(a *App, r row, selected bool, w int) string {
 		styled = stMuted.Render(name)
 	}
 	if r.kind == rowRemote {
-		lead := bar + strings.Repeat(" ", ageW+1) + stMuted.Render("+") + "  "
+		lead := bar + strings.Repeat(" ", ageW+1) + stMuted.Render("+")
+		lead += strings.Repeat(" ", nameCol(a)-width(lead))
 		return lead + truncate(stMuted.Render("fetch ")+styled+stMuted.Render(" from origin"), w-width(lead))
 	}
-	dirty, live := " ", " "
+	dirty, claude := " ", ""
 	if r.b.Worktree != "" {
 		st := a.statuses[r.b.Worktree]
 		switch {
@@ -541,33 +616,36 @@ func (h *homeScreen) renderRow(a *App, r row, selected bool, w int) string {
 		case st.Dirty:
 			dirty = stErr.Render("*")
 		}
-		if a.live[r.b.Worktree] > 0 {
-			live = "◆"
-		}
+		activity, others := claudeSummary(a.sessions[r.b.Worktree])
+		claude = activityStyle(activity).Render(activity) + stMuted.Render(others)
 	}
 	age := stMuted.Render(fmt.Sprintf("%*s", ageW, ago(r.b.LastActive)))
-	lead := bar + age + " " + dirty + live + " "
+	lead := bar + age + " " + dirty + " "
+	if cw := claudeWidth(a); cw > 0 {
+		lead += pad(claude, cw) + " "
+	}
 	if r.b.Gone {
 		styled += stWarn.Render("  gone")
 	}
 	return lead + truncate(styled, w-width(lead))
 }
 
-// detail describes the selected branch in two quiet lines under the list:
-// its last commit, then its state.
+// detail describes the selected branch in quiet lines under the list: its
+// last commit, its state, then its worktree's Claude sessions.
 func (h *homeScreen) detail(a *App, rows []row, w int) []string {
 	if h.cursor >= len(rows) {
 		return nil
 	}
 	r := rows[h.cursor]
-	textW := w - nameCol
+	indent := nameIndent(a)
+	textW := w - len(indent)
 	if r.kind == rowRemote {
-		return []string{nameIndent + truncate(stMuted.Render("fetches from origin and checks out into a free worktree"), textW)}
+		return []string{indent + truncate(stMuted.Render("fetches from origin and checks out into a free worktree"), textW)}
 	}
 	b := r.b
 	var lines []string
 	if b.Subject != "" {
-		lines = append(lines, nameIndent+truncate(b.Subject+stMuted.Render("  "+ago(b.CommitTime)), textW))
+		lines = append(lines, indent+truncate(b.Subject+stMuted.Render("  "+ago(b.CommitTime)), textW))
 	}
 	var facts []string
 	switch r.kind {
@@ -588,9 +666,6 @@ func (h *homeScreen) detail(a *App, rows []row, w int) []string {
 		default:
 			facts = append(facts, "clean")
 		}
-		if n := a.live[b.Worktree]; n > 0 {
-			facts = append(facts, plural(n, "Claude session", "Claude sessions"))
-		}
 	}
 	switch {
 	case b.Gone:
@@ -608,7 +683,10 @@ func (h *homeScreen) detail(a *App, rows []row, w int) []string {
 	if t := clock(b.LastActive); t != "" {
 		facts = append(facts, "active "+t)
 	}
-	lines = append(lines, nameIndent+truncate(stMuted.Render(strings.Join(facts, " · ")), textW))
+	lines = append(lines, indent+truncate(stMuted.Render(strings.Join(facts, " · ")), textW))
+	if sessions := a.sessions[b.Worktree]; b.Worktree != "" && len(sessions) > 0 {
+		lines = append(lines, indent+truncate(sessionsLine(sessions), textW))
+	}
 	return lines
 }
 

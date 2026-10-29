@@ -147,6 +147,36 @@ func TestHomeListsBranchesAndFrameFits(t *testing.T) {
 	}
 }
 
+func TestHomeShowsWhatClaudeSessionsAreDoing(t *testing.T) {
+	r := testrepo.New(t, 3)
+	r.Checkout(1, "me/first")
+	r.Checkout(2, "me/second")
+	r.ClaudeAgents(`[
+		{"cwd": "` + r.Slot(1) + `", "kind": "interactive", "name": "first-chat", "status": "busy"},
+		{"cwd": "` + r.Slot(1) + `", "kind": "interactive", "name": "first-review", "status": "idle"},
+		{"cwd": "` + r.Slot(2) + `", "kind": "background", "name": "second-agent", "status": "idle", "state": "done"}
+	]`)
+	a := newTestApp(t)
+	a.Update(a.loadSessions()())
+	out := assertFrame(t, a)
+	for _, want := range []string{"busy +1 me/first", "done    me/second"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("home is missing %q:\n%s", want, out)
+		}
+	}
+	details := map[string]string{
+		"me/first":  "Claude: first-chat busy, first-review idle",
+		"me/second": "Claude: second-agent (background) done",
+	}
+	for branch, want := range details {
+		a.Update(tea.PasteMsg{Content: branch})
+		if out := assertFrame(t, a); !strings.Contains(out, want) {
+			t.Errorf("detail for %s is missing %q:\n%s", branch, want, out)
+		}
+		press(a, "esc")
+	}
+}
+
 func TestEveryScreenFits(t *testing.T) {
 	r := testrepo.New(t, 2)
 	r.Checkout(1, "me/a-very-long-branch-name-that-goes-on-and-on-and-on-past-the-edge-of-the-screen")

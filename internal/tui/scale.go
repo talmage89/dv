@@ -63,7 +63,7 @@ func (s *scaleScreen) plan(a *App) pool.ScalePlan {
 			statuses[p] = st
 		}
 	}
-	return a.repo.PlanScale(a.snap, s.target, statuses, a.live)
+	return a.repo.PlanScale(a.snap, s.target, statuses, a.sessions)
 }
 
 type scalePrepMsg struct{ err error }
@@ -270,7 +270,7 @@ func (s *scaleScreen) view(a *App, w, h int) string {
 		st, ok := a.statuses[sl.Path]
 		switch {
 		case sl.Missing:
-		case sl.Detached() && ok && st.Err == "" && !st.Dirty && a.live[sl.Path] == 0:
+		case sl.Detached() && ok && st.Err == "" && !st.Dirty && len(a.sessions[sl.Path]) == 0:
 			free++
 		default:
 			inUse++
@@ -326,7 +326,7 @@ func (s *scaleScreen) bar(a *App, p pool.ScalePlan, w int) string {
 		switch {
 		case removing[sl.Path]:
 			b.WriteString(stErr.Render("×"))
-		case sl.Detached() && ok && st.Err == "" && !st.Dirty && a.live[sl.Path] == 0:
+		case sl.Detached() && ok && st.Err == "" && !st.Dirty && len(a.sessions[sl.Path]) == 0:
 			b.WriteString(stMuted.Render("○"))
 		default:
 			b.WriteString("●")

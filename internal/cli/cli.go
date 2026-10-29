@@ -508,7 +508,7 @@ func (s *session) sweep(r *pool.Repo, args []string) int {
 		case c.Parked:
 			fmt.Printf("skip     %s (parked; unpark it or sweep from the interface)\n", c.Branch)
 			continue
-		case c.Live > 0:
+		case len(c.Sessions) > 0:
 			fmt.Printf("skip     %s (Claude is running there; sweep it from the interface)\n", c.Branch)
 			continue
 		case c.Status.Dirty && !c.Gone:
@@ -575,7 +575,7 @@ func (s *session) scale(r *pool.Repo, args []string) int {
 		statuses[p] = st
 		mu.Unlock()
 	})
-	plan := r.PlanScale(snap, target, statuses, pool.LiveSessions(s.ctx, paths))
+	plan := r.PlanScale(snap, target, statuses, pool.Sessions(s.ctx, paths))
 	if len(plan.Add) > 0 {
 		if err := r.PrepareAdd(s.ctx); err != nil {
 			return fail(err)

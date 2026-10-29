@@ -3,11 +3,7 @@ package pool
 import (
 	"bytes"
 	"context"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -77,49 +73,4 @@ func StatusAll(ctx context.Context, paths []string, onEach func(path string, st 
 
 func statusConcurrency() int {
 	return min(max(runtime.NumCPU()/3, 2), 4)
-}
-
-// LiveSessions maps worktree path to the number of running Claude Code
-// processes whose working directory is inside it.
-func LiveSessions(ctx context.Context, worktrees []string) map[string]int {
-	cwds := claudeCwds(ctx)
-	live := map[string]int{}
-	for _, cwd := range cwds {
-		for _, wt := range worktrees {
-			if cwd == wt || strings.HasPrefix(cwd, wt+string(filepath.Separator)) {
-				live[wt]++
-				break
-			}
-		}
-	}
-	return live
-}
-
-// claudeCwds lists the working directories of running `claude` processes.
-func claudeCwds(ctx context.Context) []string {
-	pidsOut, err := exec.CommandContext(ctx, "pgrep", "-x", "claude").Output()
-	if err != nil {
-		return nil // exit 1: no matching processes
-	}
-	pids := strings.Fields(string(pidsOut))
-	if len(pids) == 0 {
-		return nil
-	}
-	if runtime.GOOS == "linux" {
-		var cwds []string
-		for _, pid := range pids {
-			if cwd, err := os.Readlink("/proc/" + pid + "/cwd"); err == nil {
-				cwds = append(cwds, cwd)
-			}
-		}
-		return cwds
-	}
-	out, _ := exec.CommandContext(ctx, "lsof", "-a", "-p", strings.Join(pids, ","), "-d", "cwd", "-Fn").Output()
-	var cwds []string
-	for _, line := range strings.Split(string(out), "\n") {
-		if p, ok := strings.CutPrefix(line, "n"); ok {
-			cwds = append(cwds, p)
-		}
-	}
-	return cwds
 }

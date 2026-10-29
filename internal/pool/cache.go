@@ -11,8 +11,8 @@ import (
 // Cache persists the slow-to-compute parts of the pool's state between runs
 // so the first frame can show last-known values while fresh ones load.
 type Cache struct {
-	Statuses map[string]Status `json:"statuses"`
-	Live     map[string]int    `json:"live"`
+	Statuses map[string]Status    `json:"statuses"`
+	Sessions map[string][]Session `json:"sessions"`
 }
 
 func (r *Repo) cachePath() string {
@@ -26,7 +26,7 @@ func (r *Repo) cachePath() string {
 
 // LoadCache returns the persisted state, or an empty cache.
 func (r *Repo) LoadCache() Cache {
-	c := Cache{Statuses: map[string]Status{}, Live: map[string]int{}}
+	c := Cache{Statuses: map[string]Status{}, Sessions: map[string][]Session{}}
 	path := r.cachePath()
 	if path == "" {
 		return c
@@ -39,8 +39,8 @@ func (r *Repo) LoadCache() Cache {
 	if c.Statuses == nil {
 		c.Statuses = map[string]Status{}
 	}
-	if c.Live == nil {
-		c.Live = map[string]int{}
+	if c.Sessions == nil {
+		c.Sessions = map[string][]Session{}
 	}
 	return c
 }

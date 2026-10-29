@@ -14,10 +14,10 @@ import (
 // is not the user's is freed, keeping the branch.
 type SweepCandidate struct {
 	Branch   string
-	Worktree string // holding worktree, if checked out
-	Status   Status // of the holding worktree
-	Live     int    // Claude sessions running in the holding worktree
-	Gone     bool   // upstream deleted on origin; sweeping deletes the branch
+	Worktree string    // holding worktree, if checked out
+	Status   Status    // of the holding worktree
+	Sessions []Session // Claude sessions running in the holding worktree
+	Gone     bool      // upstream deleted on origin; sweeping deletes the branch
 	Parked   bool
 	InMain   bool // checked out in the main worktree; never swept
 }
@@ -32,7 +32,7 @@ func (c SweepCandidate) Selectable() bool {
 // DefaultSelected is the initial selection: everything safe. Uncommitted
 // changes, parked branches, and running Claude sessions must be opted into.
 func (c SweepCandidate) DefaultSelected() bool {
-	return c.Selectable() && !c.Status.Dirty && !c.Parked && c.Live == 0
+	return c.Selectable() && !c.Status.Dirty && !c.Parked && len(c.Sessions) == 0
 }
 
 // Fetch updates remote-tracking refs and drops ones deleted on the remote.
@@ -70,14 +70,14 @@ func (r *Repo) SweepCandidates(ctx context.Context) ([]SweepCandidate, error) {
 			paths = append(paths, branch.Worktree)
 		}
 	}
-	live := LiveSessions(ctx, paths)
+	sessions := Sessions(ctx, paths)
 	out := make([]SweepCandidate, 0, len(gone)+len(others))
 	for _, branch := range gone {
 		c := SweepCandidate{Branch: branch.Name, Worktree: branch.Worktree, Gone: true, Parked: branch.Parked}
 		if branch.Worktree != "" {
 			c.InMain = branch.Worktree == snap.Main.Path
 			c.Status = StatusOf(ctx, branch.Worktree)
-			c.Live = live[branch.Worktree]
+			c.Sessions = sessions[branch.Worktree]
 		}
 		out = append(out, c)
 	}
@@ -86,7 +86,7 @@ func (r *Repo) SweepCandidates(ctx context.Context) ([]SweepCandidate, error) {
 			Branch:   branch.Name,
 			Worktree: branch.Worktree,
 			Status:   StatusOf(ctx, branch.Worktree),
-			Live:     live[branch.Worktree],
+			Sessions: sessions[branch.Worktree],
 		})
 	}
 	return out, nil

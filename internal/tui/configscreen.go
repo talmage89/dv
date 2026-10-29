@@ -148,7 +148,7 @@ func (s *configScreen) reload(a *App, toast string) tea.Cmd {
 	}
 	a.cfg, a.repo, a.snap = cfg, repo, snap
 	a.notify(levelInfo, toast)
-	return tea.Batch(a.loadLive(), a.refreshStatuses(nil), a.startAnimation())
+	return tea.Batch(a.loadSessions(), a.refreshStatuses(nil), a.startAnimation())
 }
 
 func (s *configScreen) view(a *App, w, h int) string {

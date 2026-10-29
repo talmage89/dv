@@ -14,16 +14,17 @@ a long-running session stays in its directory.
 
   / search, or paste a branch and press enter
 
-  ›   1m  ◆ alex/checkout-retry-backoff
-     53m  ◆ alex/settings-page-redesign
-     21h *  alex/flaky-upload-test
-      2d    alex/faster-search-index
+  ›   1m   busy    alex/checkout-retry-backoff
+     53m   waiting alex/settings-page-redesign
+     21h *         alex/flaky-upload-test
+      2d           alex/faster-search-index
 
-            parked
-     13h    alex/2026-09-11-orm-upgrade-spike
+                   parked
+     13h           alex/2026-09-11-orm-upgrade-spike
 
-            fix: retry checkout on a transient gateway error  3h
-            clean · 1 Claude session · pushed · 8 ahead, 0 behind main · active 10:29
+                   fix: retry checkout on a transient gateway error  3h
+                   clean · pushed · 8 ahead, 0 behind main · active 10:29
+                   Claude: checkout-retry busy
 
   10 checked out · 9 free · 1 parked
   enter open   N new   W fresh   Z park   S sweep   R run   O scale   M main   C config   ? help
@@ -102,9 +103,12 @@ a name that does not exist locally is offered as a fetch from origin.
 | Y | copy the branch name |
 | ? | every key for the current screen |
 
-Row markers: red `*` means uncommitted changes, `◆` means a Claude Code
-session is running in that worktree, and `gone` means the upstream was
-deleted. The selected row carries a slowly drifting gradient; pick its colors
+Row markers: red `*` means uncommitted changes, and `gone` means the upstream
+was deleted. When Claude Code is installed, a column before the name says what
+the sessions in that worktree are doing: `waiting` for you, `busy`, `idle`,
+or, for a background agent, `done`, `failed`, or `stopped`. A worktree with
+several sessions shows the one that most wants attention and counts the rest
+(`busy +1`); the detail under the list names each session. The selected row carries a slowly drifting gradient; pick its colors
 in config (`tide`, `ember`, `orchid`, or `mono` for none).
 
 ### Key bindings
@@ -126,6 +130,12 @@ previous occupant's sessions are not attributed to it.
 **Free worktrees.** A worktree is free when it is detached, has no uncommitted
 changes, and has no running Claude session. dv never checks a branch out into
 a worktree that is not free, and scaling down only removes free worktrees.
+
+**Claude sessions** come from `claude agents --json`, which lists interactive
+sessions and background agents. A background agent that has finished still
+counts until it is stopped, because its process stays in the worktree. With a
+Claude Code version that lacks the command, dv finds running `claude`
+processes instead and shows them as `running`.
 
 **Parking** requires a clean worktree. The mark lives in the branch's own git
 config section (`branch.<name>.dvparked`), so git removes it when the branch

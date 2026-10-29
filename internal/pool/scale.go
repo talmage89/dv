@@ -26,14 +26,14 @@ type ScalePlan struct {
 
 // PlanScale computes the plan for resizing the pool to target slots. Only
 // free slots (detached, clean, no Claude session) are ever removed; statuses
-// and live come from the caller's latest reads.
-func (r *Repo) PlanScale(snap *Snapshot, target int, statuses map[string]Status, live map[string]int) ScalePlan {
+// and sessions come from the caller's latest reads.
+func (r *Repo) PlanScale(snap *Snapshot, target int, statuses map[string]Status, sessions map[string][]Session) ScalePlan {
 	target = min(max(target, 0), MaxSlots)
 	p := ScalePlan{Current: len(snap.Slots), Target: target}
 	var free []Slot
 	for _, s := range snap.Slots {
 		st, known := statuses[s.Path]
-		if s.Missing || (s.Detached() && !s.Locked && known && st.Known() && st.Err == "" && !st.Dirty && live[s.Path] == 0) {
+		if s.Missing || (s.Detached() && !s.Locked && known && st.Known() && st.Err == "" && !st.Dirty && len(sessions[s.Path]) == 0) {
 			free = append(free, s)
 		}
 	}

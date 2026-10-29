@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/talmage89/dv/internal/config"
+	"github.com/talmage89/dv/internal/testrepo"
 )
 
 // fixture is a throwaway repository laid out like a real dv setup:
@@ -46,6 +47,7 @@ func isolateGit(t *testing.T) string {
 	t.Setenv("HOME", dir)
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, "claude"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
+	testrepo.FakeClaude(t, dir)
 	for _, k := range []string{"DEV_REPO", "DEV_ROOT", "DEV_USER"} {
 		t.Setenv(k, "")
 	}
@@ -372,8 +374,8 @@ func TestPlanScale(t *testing.T) {
 	if len(down.Remove) != 1 || down.Remove[0].Path != f.slot(3) || down.Shortfall != 1 {
 		t.Fatalf("remove = %+v shortfall %d", down.Remove, down.Shortfall)
 	}
-	live := map[string]int{f.slot(3): 1}
-	if p := f.repo.PlanScale(s, 1, statuses, live); len(p.Remove) != 0 {
+	sessions := map[string][]Session{f.slot(3): {{Status: "idle"}}}
+	if p := f.repo.PlanScale(s, 1, statuses, sessions); len(p.Remove) != 0 {
 		t.Fatalf("removed a slot with a live session: %+v", p.Remove)
 	}
 	for _, p := range up.Add {
@@ -504,6 +506,53 @@ func TestActivityPrefersClaudeTranscripts(t *testing.T) {
 	os.Chtimes(filepath.Join(proj, "session.jsonl"), future, future)
 	if got := f.snap().CheckedOut(); got[0].Name != "me/a" {
 		t.Fatalf("order = %v, want me/a first", names(got))
+	}
+}
+
+func TestSessionsComeFromClaudeAgents(t *testing.T) {
+	f := newFixture(t, 3)
+	ctx := context.Background()
+	f.write(f.dir, filepath.Base(testrepo.ClaudeAgentsPath(f.dir)), `[
+		{"pid": 1, "cwd": "`+f.slot(1)+`", "kind": "interactive", "name": "one", "status": "busy"},
+		{"pid": 2, "cwd": "`+filepath.Join(f.slot(1), "web")+`", "kind": "interactive", "name": "two", "status": "waiting", "waitingFor": "permission"},
+		{"pid": 3, "cwd": "`+f.slot(2)+`", "kind": "background", "name": "three", "status": "idle", "state": "done"},
+		{"pid": 4, "cwd": "`+f.slot(3)+`0", "kind": "interactive", "status": "idle"}
+	]`)
+	got := Sessions(ctx, []string{f.slot(1), f.slot(2), f.slot(3)})
+	if one := got[f.slot(1)]; len(one) != 2 || one[0].Activity() != "busy" || one[1].Activity() != "waiting" || one[1].WaitingFor != "permission" {
+		t.Fatalf("dev-1 sessions = %+v", one)
+	}
+	if two := got[f.slot(2)]; len(two) != 1 || !two[0].Background || two[0].Activity() != "done" {
+		t.Fatalf("dev-2 sessions = %+v", two)
+	}
+	if three := got[f.slot(3)]; len(three) != 0 {
+		t.Fatalf("a session in dev-30 counted for dev-3: %+v", three)
+	}
+	slot, err := f.repo.FreeSlot(ctx, f.snap())
+	if err != nil || slot.Path != f.slot(3) {
+		t.Fatalf("free slot = %v, %v; want dev-3, the only one without a session", slot.Path, err)
+	}
+}
+
+func TestSessionActivity(t *testing.T) {
+	cases := []struct {
+		session Session
+		want    string
+	}{
+		{Session{Status: "busy"}, "busy"},
+		{Session{Status: "waiting"}, "waiting"},
+		{Session{Status: "idle"}, "idle"},
+		{Session{Background: true, State: "working"}, "busy"},
+		{Session{Background: true, State: "blocked"}, "waiting"},
+		{Session{Background: true, Status: "idle", State: "done"}, "done"},
+		{Session{Background: true, State: "failed"}, "failed"},
+		{Session{Background: true, State: "stopped"}, "stopped"},
+		{Session{}, "running"},
+	}
+	for _, c := range cases {
+		if got := c.session.Activity(); got != c.want {
+			t.Errorf("%+v: activity %q, want %q", c.session, got, c.want)
+		}
 	}
 }
 

@@ -218,7 +218,7 @@ func (s *sweepScreen) next(a *App, i int) tea.Cmd {
 	} else {
 		a.notify(levelInfo, text)
 	}
-	return tea.Batch(a.reloadSnapshot(), a.loadLive())
+	return tea.Batch(a.reloadSnapshot(), a.loadSessions())
 }
 
 func (s *sweepScreen) view(a *App, w, h int) string {
@@ -311,8 +311,9 @@ func (s *sweepScreen) renderItem(a *App, it sweepItem, selected bool, w int) str
 			notes = append(notes, stErr.Render(t))
 		}
 	}
-	if it.c.Live > 0 && it.result == "" {
-		notes = append(notes, stWarn.Render("Claude running"))
+	if len(it.c.Sessions) > 0 && it.result == "" {
+		activity, others := claudeSummary(it.c.Sessions)
+		notes = append(notes, stWarn.Render("Claude "+activity+others))
 	}
 	if it.c.Parked {
 		notes = append(notes, stMuted.Render("parked"))

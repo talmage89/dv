@@ -45,7 +45,7 @@ func Run(ctx context.Context, cfg *config.Config, repo *pool.Repo, opts Options,
 	if _, err := p.Run(); err != nil {
 		return Result{}, err
 	}
-	app.repo.SaveCache(pool.Cache{Statuses: app.statuses, Live: app.live})
+	app.repo.SaveCache(pool.Cache{Statuses: app.statuses, Sessions: app.sessions})
 	return Result{CD: app.cdTarget, Note: app.exitNote}, nil
 }
 
@@ -62,7 +62,8 @@ type App struct {
 	snap     *pool.Snapshot
 	statuses map[string]pool.Status
 	fresh    map[string]bool // statuses computed during this session
-	live     map[string]int
+	sessions map[string][]pool.Session
+	claude   bool // Claude Code is installed, so the home list shows its column
 	issues   []pool.SyncIssue
 
 	w, h    int
@@ -105,7 +106,8 @@ func newApp(ctx context.Context, cfg *config.Config, repo *pool.Repo, opts Optio
 		snap:     snap,
 		statuses: cache.Statuses,
 		fresh:    map[string]bool{},
-		live:     cache.Live,
+		sessions: cache.Sessions,
+		claude:   pool.ClaudeInstalled(),
 		spinner:  spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(plain)),
 	}
 	a.pruneCache()
@@ -127,16 +129,16 @@ func (a *App) pruneCache() {
 			delete(a.statuses, p)
 		}
 	}
-	for p := range a.live {
+	for p := range a.sessions {
 		if !valid[p] {
-			delete(a.live, p)
+			delete(a.sessions, p)
 		}
 	}
 }
 
 func (a *App) Init() tea.Cmd {
 	return tea.Batch(
-		a.loadLive(),
+		a.loadSessions(),
 		a.refreshStatuses(nil),
 		a.maybeFetch(false),
 		a.syncCmd(pool.SyncAuto),
@@ -220,7 +222,7 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds := []tea.Cmd{tick(msg.n + 1)}
 		if msg.n%5 == 0 && a.busy == "" {
-			cmds = append(cmds, a.reloadSnapshot(), a.loadLive())
+			cmds = append(cmds, a.reloadSnapshot(), a.loadSessions())
 		}
 		return a, tea.Batch(cmds...)
 	case animMsg:
@@ -237,7 +239,7 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// stale. Multiplexers report focus on every pane switch, so the
 		// expensive status pass is throttled.
 		a.blurred = false
-		cmds := []tea.Cmd{a.reloadSnapshot(), a.loadLive()}
+		cmds := []tea.Cmd{a.reloadSnapshot(), a.loadSessions()}
 		cmds = append(cmds, a.startAnimation())
 		if time.Since(a.lastStatusPass) > 30*time.Second {
 			cmds = append(cmds, a.refreshStatuses(nil))
@@ -257,8 +259,8 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case statusDoneMsg:
 		a.statusPending--
-	case liveMsg:
-		a.live = msg.live
+	case sessionsMsg:
+		a.sessions = msg.sessions
 	case fetchDoneMsg:
 		a.fetching = false
 		a.lastFetch = time.Now()
@@ -460,15 +462,15 @@ func (a *App) reloadSnapshot() tea.Cmd {
 	}
 }
 
-type liveMsg struct{ live map[string]int }
+type sessionsMsg struct{ sessions map[string][]pool.Session }
 
-func (a *App) loadLive() tea.Cmd {
+func (a *App) loadSessions() tea.Cmd {
 	var paths []string
 	for _, s := range a.snap.All() {
 		paths = append(paths, s.Path)
 	}
 	ctx := a.ctx
-	return func() tea.Msg { return liveMsg{live: pool.LiveSessions(ctx, paths)} }
+	return func() tea.Msg { return sessionsMsg{sessions: pool.Sessions(ctx, paths)} }
 }
 
 type statusMsg struct {
@@ -615,7 +617,7 @@ func (a *App) runOp(desc string, fn func(ctx context.Context) opResult) tea.Cmd 
 func (a *App) opDone(msg opDoneMsg) tea.Cmd {
 	a.busy = ""
 	res := msg.res
-	cmds := []tea.Cmd{a.reloadSnapshot(), a.loadLive()}
+	cmds := []tea.Cmd{a.reloadSnapshot(), a.loadSessions()}
 	if res.err != nil {
 		a.notify(levelError, res.err.Error())
 	} else if res.toast != "" {
@@ -642,7 +644,7 @@ func (a *App) opDone(msg opDoneMsg) tea.Cmd {
 func (a *App) freeCount() (free int, known bool) {
 	known = true
 	for _, s := range a.snap.Slots {
-		if s.Missing || !s.Detached() || a.live[s.Path] > 0 {
+		if s.Missing || !s.Detached() || len(a.sessions[s.Path]) > 0 {
 			continue
 		}
 		st, ok := a.statuses[s.Path]

@@ -38,6 +38,7 @@ func New(t testing.TB, slots int) *Repo {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, "claude"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	FakeClaude(t, dir)
 	r := &Repo{T: t, Dir: dir, Root: filepath.Join(dir, "root")}
 	r.Main = filepath.Join(r.Root, "app")
 	origin := filepath.Join(dir, "origin.git")
@@ -55,6 +56,33 @@ func New(t testing.TB, slots int) *Repo {
 	t.Setenv("DEV_ROOT", r.Root)
 	t.Setenv("DEV_USER", "me")
 	return r
+}
+
+// FakeClaude puts a stand-in `claude` first on the PATH so tests never reach
+// a real Claude Code installation. Its `agents --json` prints the file at
+// ClaudeAgentsPath(dir), or an empty list.
+func FakeClaude(t testing.TB, dir string) {
+	t.Helper()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n[ \"$1 $2\" = \"agents --json\" ] || exit 1\ncat '" + ClaudeAgentsPath(dir) + "' 2>/dev/null || echo '[]'\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// ClaudeAgentsPath is the file the fake `claude agents --json` prints.
+func ClaudeAgentsPath(dir string) string { return filepath.Join(dir, "claude-agents.json") }
+
+// ClaudeAgents sets what the fake `claude agents --json` prints.
+func (r *Repo) ClaudeAgents(json string) {
+	r.T.Helper()
+	if err := os.WriteFile(ClaudeAgentsPath(r.Dir), []byte(json), 0o644); err != nil {
+		r.T.Fatal(err)
+	}
 }
 
 // Slot returns the path of pool slot n.
