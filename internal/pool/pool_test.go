@@ -183,6 +183,15 @@ func TestCheckoutUsesLowestCleanSlot(t *testing.T) {
 	}
 }
 
+func TestFreeSlotIgnoresWorktreeLocks(t *testing.T) {
+	f := newFixture(t, 2)
+	f.git(f.main, "worktree", "lock", "--reason", "prune protection", f.slot(1))
+	slot, err := f.repo.FreeSlot(context.Background(), f.snap())
+	if err != nil || slot.Path != f.slot(1) {
+		t.Fatalf("free slot = %v, %v; want dev-1, locked but detached and clean", slot.Path, err)
+	}
+}
+
 func TestCheckoutRemoteOnlyBranchTracksOrigin(t *testing.T) {
 	f := newFixture(t, 1)
 	f.git(f.main, "push", "-q", "origin", "origin/main:refs/heads/teammate/x")
